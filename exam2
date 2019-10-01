@@ -1,0 +1,109 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r,warning=FALSE,message=FALSE,include=FALSE}
+library(tidyverse)
+library(cluster)
+library(factoextra)
+library("cluster")
+```
+
+#Dane zostają zaimportowane i przetworzone w sposób umożliwiający grupowanie. Następnie wartości w tabeli zostają znormalizowane.
+```{r}
+egzData <- NULL
+egzdataRaw <- read.csv("~/Documents/ue/s4/aszd/egzcsv.csv", sep=",", header=T, dec=".")
+egzdataRaw <- egzdataRaw %>% remove_rownames %>% column_to_rownames(var="Country")
+egzData <- scale(egzdataRaw)
+egzdataRaw
+egzData
+```
+
+#Na podstawie poniższych wykresów sprawdzamy ile grup powinno być branych pod uwagę.
+#Aby wyniki wywołanych metod nie różniły się z każdym powtórzeniem, użyta zostaje funkcja set.seed() która stabilizuje generator liczb losowych tak, aby z konkretnego zbioru pobierał zawsze odpowiadającą mu stałą próbę. 
+#Pierwszym graficznym przedstawieniem jest wykres liniowy zależności kwadratów sum uzyskanych za pomocą algorytmu k-means od ilości grup. Aby znależć odpowiednią ilość clusterow dla tego algorytmu, konieczne jest przeprowadzenie kilku wizualizacji. 
+```{r}
+wss <- (nrow(egzData)-1)*sum(apply(egzData,2,var))
+wss
+set.seed(24)
+for (i in 2:15) wss[i] <- sum(kmeans(egzData, centers=i)$withinss)
+plot(1:15, wss, type="b", xlab="Ilość grup", ylab="Suma kwadratów w grupie")
+```
+
+
+#Na podstawie poprzedniego wykresu wywnioskować można, że najlepiej badanie przeprowadzić będzie na 5 lub 6 grupach. Aby wizualnie porównać, który z wyników okaże się trafniejszy przedstawione zostają wykresy fviz_cluster dla algorytmu k-means.
+```{r}
+set.seed(24)
+implKm <- kmeans(egzData, 5)
+implKm
+fviz_cluster(implKm, data = egzData, main = "5 cluster")
+implKm <- kmeans(egzData, 6)
+fviz_cluster(implKm, data = egzData, main = "6 cluster")
+```
+
+#Z wykresów wynika, że 6 grupa przenosi Włochy i Grecję do innej, oddalonej o taką samą odległość jak poprzednia, grupy. Dodatkowo utworzony zostaje zbiór starający się wyróżnić część wspólną dwóch pozostałych. Nie jest on jednak wystarczająco dopasowany, aby pozytywnie wpłynąć na wynik. To w połączeniu z brakiem istotności pierwszej zmiany narzuca wybór 5 grup. Potwierdzenie poprawność interpretacji wyniku przedstawione jest na drzewie grup. Narysowana na nim linia jest doopasowana tak, aby przecinała wybraną ilość zbiorów.
+```{r}
+set.seed(24)
+d <- dist(egzData, method = "euclidean") 
+fit <- hclust(d, method="ward.D") 
+plot(fit) 
+groups <- cutree(fit, k=5) 
+rect.hclust(fit, k=5, border="red")
+```
+
+
+#Kolejnym krokiem jest ocena jakości zbiorów pod względem ich zróżnicowania. Po fviz_cluster widać już teraz, że miara dopasowania może być słaba(prawdopodobnie ze względu na pokrywające się grupy). Zastosowana analiza Silhouette jest metodą sprawdzającą klasteryzację. Mierzy ona jakość dopasowania skupień i odległości między grupami. Po sprawdzeniu wyników dla 4, 5 i 6 grup
+```{r}
+set.seed(24)
+d <- dist(egzData, method = "euclidean")
+implKm <- kmeans(egzData, 6)
+fviz_silhouette(silhouette(implKm$cluster, d))
+implKm <- kmeans(egzData, 5)
+fviz_silhouette(silhouette(implKm$cluster, d))
+implKm <- kmeans(egzData, 4)
+fviz_silhouette(silhouette(implKm$cluster, d))
+fviz_cluster(implKm, data = egzData, title = "4 cluster")
+```
+
+#Miara dopasowania jest nadal bardzo niska. Zbiór nr. 3 jest słabo dopasowany, ponieważ zawiera w sobie również zbiór nr. 4, ktory będąc znacznie węższym od 3, jest dopasowany dobrze. Grupa nr. 1 ze względu na swoją obszerność jest dopasowana do siebie w średnio-słabym stopniu. Jest ona stosunkowo duża powierzchniowo, ale zawiera też wiele zmiennych skupionych w prawym, dolnym rogu. Średnia szerokość = 0.27 sugeruje, że ogólny zbiór nie jest dobrze dopasowany do użycia metod grupowania. Grupa numer 2 składa się jedynie z 2 państw, ich miara dopasowania nie jest zależna od wielu zmiennych a więc i ciężka do oceny.
+
+#Z powodu wielu odstających obserwacji oraz małego rozmiaru zbioru, sprawdzona zostanie metoda PAM. Metoda różni się od poprzedniej tym, że zamiast centroidów (wartość punktu na srodku wielowymiarowej płaszczyzny) użyte są medioidy (obiekt mający podobne właściwoci do wartości danych w grupie). Kolejne wykresy prezentują wykres Silhouette dla 4, 5 i 6 grup. Ostatni wykres jest wynikiem zastosowania funkcji fviz_cluster dla 4 grup powstałych przez użycie metody pam.
+```{r}
+set.seed(24)
+#pam
+pamx <- pam(egzData, 4)
+fviz_silhouette(silhouette(pamx))
+pamx <- pam(egzData, 5)
+fviz_silhouette(silhouette(pamx))
+pamx <- pam(egzData, 6)
+fviz_silhouette(silhouette(pamx))
+pamx <- pam(egzData, 4)
+fviz_cluster(pamx, data = egzData, title = "4 cluster")
+```
+
+#Zastosowanie algorytmu k-medoids nie wpłynęło na powstałe grupy znacząco. Potwierdzone zostaje, poprzez różnice w szerokości, użycie 4 grup. 
+#Rezultaty grupowania są widoczne poniżej. Ponieważ wizualna ocena jakości zbiorów wypadła lepiej w przypadku algorytmu k-means, zastosowany on będzie do przedstawienia końcowego rezultatu. Wyniki uzyskane z poniższego kodu zostaną pogrupowane względem swojej przynalezności do grup.
+```{r}
+set.seed(24)
+implKm <- kmeans(egzData, 4)
+result <- data.frame(egzData, implKm$cluster)
+subset(result, result$implKm.cluster == 1)
+subset(result, result$implKm.cluster == 2)
+subset(result, result$implKm.cluster == 3)
+subset(result, result$implKm.cluster == 4)
+```
+#Wartosci odkryte dla każdej z grup są przedstawione w poniższej tabeli. Wskazują na średnią wartość nazwanego wiersza w nazwanej grupie. Warto dodać, iż wszystkie wyniki powstały na podstawie normalizowanych (nie rzeczywistych) danych wejściowych. 
+```{r}
+set.seed(24)
+class(implKm$cluster)
+cluster_1 <- names(implKm$cluster[implKm$cluster == 1])
+cluster_2 <- names(implKm$cluster[implKm$cluster == 2])
+cluster_3 <- names(implKm$cluster[implKm$cluster == 3])
+cluster_4 <- names(implKm$cluster[implKm$cluster == 4])
+groups <- pamx$clustering
+results1 <- as.data.frame(t(aggregate(egzData,list(groups),mean)))  
+results1[2:9,]
+```
